@@ -4,6 +4,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.firefox.options import Options
 from datetime import datetime
 from pathlib import Path
+import time
 import whois
 import shutil
 import os
@@ -38,7 +39,7 @@ domain_ptrn= re.compile(r'(?:https?://)([^/]+)')                                
 base_ptrn = re.compile(r'(https?://[^/]+)')                                     # no touchy! (unless you're a regex nerd)
 base_ptrn_non_grouped_str = r'(https?://[^/]+)'                                 # no touchy! (unless you're a regex nerd)
 
-org_ptrn = re.compile(r'')                                                      #Put regex here you want to match on - what might be some important, relevant keywords?
+org_ptrn = re.compile(r'')                                                      # Put regex here you want to match on - what might be some important, relevant keywords?
 #####################################################################
 ###                      Selenium Inputs                          ###
 #####################################################################
@@ -51,15 +52,19 @@ window_height = 1024
 #   isAlive(url):
 #       url: the url (str) to check the alive status for
 #   Descr:
+#       - Remove newline in string TODO: Fix this overall
+#       - Check if protocol is included, else add it (http default)
 #       - Get the status code for the url specified
-#         after we remove the trailing new line TODO: fix that
 #   Return:
 #       True  = 200 received
 #       False = 404 received
 #       Otherwise return the status code
 #########################################################
 def isAlive(url):
-    s_code = getStatusCode(url.rstrip("\n"))
+    url = url.rstrip('\n')
+    if not url.startswith('http'):
+        url = 'http://' + url
+    s_code = getStatusCode(url)
     if (s_code == 200):
         return True
     elif s_code == 404:
@@ -79,7 +84,11 @@ def isAlive(url):
 #########################################################
 def isRelatedToOrg(content):
     content = re.sub(r'[^a-zA-Z]+', '', content)
-    return True if org_ptrn.match(content) else False 
+    if org_ptrn.match(content):
+        return True
+    else:
+        print(content)
+        return False
 
 #########################################################
 #   parseUrl(operation, url):
@@ -144,7 +153,7 @@ def writeContentToFilepath(filepath, ext = None, content = None, doAppend = Fals
             with open(filepath + ext,"a") as f:
                 f.write(content)
         else:
-            with open(filepath+str(datetime.now().time())+ ext,"w") as f:
+            with open(filepath+str(datetime.bw().time())+ ext,"w") as f:
                 f.write(content)
 
 #########################################################
@@ -348,6 +357,17 @@ def packageResults():
     pyminizip.compress_multiple(targets,paths,datetime.now().strftime('%Y-%m-%d-%I%p') + '_results.zip',input('set zip password: '),1)
     shutil.rmtree("./results/")
 
+def handleAbuse(urls):
+    abuseDictionary = {}
+    for url in urls:
+        current_domain = parseUrl('domain', url)
+        if current_domain in abuseDictionary.keys():
+            abuseDictionary[current_domain]['originals'] += [url]
+        else:
+            abuseDictionary[current_domain] = {'originals': [url]}
+            abuseDictionary[current_domain]['abuse'] = whois.getAbuseInfo(current_domain)
+        abuse_contacts = abuseDictionary[current_domain]['abuse']
+        writeContentToFilepath(abuse_info, '.txt', f'{url},{current_domain},{abuse_contacts}\n',True)
 #########################################################
 #   main():
 #   Descr:
@@ -391,11 +411,12 @@ def main():
             orig_url = raw_url.rstrip('\n')
             url = raw_url.rstrip("\n")
             url_isAlive = isAlive(url)
+            time.sleep(5)  #let the page load so content isn't empty + javascript loader
             url_isRelated = isRelatedToOrg(driver.page_source)
             url = driver.current_url
             if (url_isAlive == True) and (url_isRelated):
                 base = parseUrl("base", url)
-                need_abuse_lookup += [orig_url,base]
+                need_abuse_lookup += [orig_url,url]
                 writeContentToFilepath(redirects, ".txt", f"{orig_url} -> {url}\n", True)
                 if not base in urls_with_creds.keys():
                     urls_with_creds[base] = ""
@@ -413,6 +434,8 @@ def main():
             elif url_isAlive == False:
                 writeContentToFilepath(bads, ".txt", f"dead,{orig_url},{url}\n", True)
             elif (url_isAlive == -1) or (not url_isRelated):
+                print(url_isAlive)
+                print(url_isRelated)
                 writeContentToFilepath(bads,".txt", f"error,{orig_url},{url}\n", True)
             elif url_isAlive == 0:
                 pass 
@@ -448,13 +471,5 @@ if __name__ == "__main__":
     
     #TODO make this into a standalone function - writeAbuseInfo(domain)
     #go through the urls and transform them into 'domain' form, store as set (no repeat entries)
-    unique_urls = set(map(lambda x: parseUrl('domain', x),need_abuse_lookup))
-    for unique_url in unique_urls:
-        print(f"Obtaining abuse information for {unique_url}...")
-        abuse_items = whois.getAbuseInfo(unique_url)
-        if abuse_items:
-            abuse_items = ';'.join(whois.getAbuseInfo(unique_url))
-        else:
-            abuse_items = str(abuse_items) #turn our None (NoneType) to a string for writing with
-        writeContentToFilepath(abuse_info, '.txt',f"{unique_url},{abuse_items}\n",True) #TODO Append 1st col= 'redir' or 'og'
+    handleAbuse(need_abuse_lookup)
     packageResults()

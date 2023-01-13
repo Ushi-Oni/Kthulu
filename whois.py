@@ -27,8 +27,8 @@ class Whois:
 #       - Perform the actual abuse info lookup operation
 #       - If we find an entry with an abuse role labeled, return
 #   Return:
-#       abuse email addresses (list (str))
-#       failures return None
+#       list of email addresses (list of strings)
+#       all failures return None
 #########################################################
 def getAbuseInfo(domain):
     whois_obj = Whois(domain)

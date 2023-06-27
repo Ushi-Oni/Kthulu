@@ -2,6 +2,8 @@ from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.firefox.options import Options
+from selenium.webdriver.support.wait import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from datetime import datetime
 from pathlib import Path
 import time
@@ -10,15 +12,14 @@ import shutil
 import os
 import re
 import pyminizip
+import base64
 
 
 #####################################################################
 ###                     Directory Input                           ###
 #####################################################################
 loot_dirs = [                                                                   # Full filpaths to check for a cred dump file
-        # Examples: "/pwned/dump.txt", "/hax0r/results.txt", etc
-        # You could probably sub in some items from SecLists 
-        # (check it out if you're unfamiliar!)
+				'/MRWEEBEE/CREDS/CREDS.TXT', #[fictional example]
         ]
 links_file = "links.txt"                                                        # List of urls to check for status code and credentials
 results_dir = "./results/"                                                      # Base location for all resulting items
@@ -39,18 +40,22 @@ domain_ptrn= re.compile(r'(?:https?://)([^/]+)')                                
 base_ptrn = re.compile(r'(https?://[^/]+)')                                     # no touchy! (unless you're a regex nerd)
 base_ptrn_non_grouped_str = r'(https?://[^/]+)'                                 # no touchy! (unless you're a regex nerd)
 
-org_ptrn = re.compile(r'')                                                      # Put regex here you want to match on - what might be some important, relevant keywords?
+org_ptrn = re.compile(r'REGEX HERE')
+default_ptrn = re.compile(r'.*[Bb]ank.*')                                           # Put regex here you want to match on - what might be some important, relevant keywords?
 #####################################################################
 ###                      Selenium Inputs                          ###
 #####################################################################
-user_agent = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Mobile/15E148 Safari/604.1"
-window_width = 720
+user_agent = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3 Mobile/15E148 Safari/604.1"
+window_width = 576
 window_height = 1024
+def_pageload_timeout = 60
 #####################################################################
 
 #########################################################
-#   isAlive(url):
+#   isAlive(url, doFullWait):
 #       url: the url (str) to check the alive status for
+#       doFullWait: whether or not (bool) to wait for 
+#       a form element to be present (max 60 sec)
 #   Descr:
 #       - Remove newline in string TODO: Fix this overall
 #       - Check if protocol is included, else add it (http default)
@@ -60,11 +65,13 @@ window_height = 1024
 #       False = 404 received
 #       Otherwise return the status code
 #########################################################
-def isAlive(url):
+def isAlive(url, doFullWait=False):
     url = url.rstrip('\n')
     if not url.startswith('http'):
         url = 'http://' + url
-    s_code = getStatusCode(url)
+    
+    s_code = getStatusCode(url, doFullWait)
+    
     if (s_code == 200):
         return True
     elif s_code == 404:
@@ -79,15 +86,15 @@ def isAlive(url):
 #       - Sub all nonalphabetic chars in content w/ nothing
 #   Return:
 #       True  =  we were able to match content to our orgs
-#                regex (org_ptrn)
+#                regex (org_ptrn) or the default regex
 #       False =  couldnt find any matches in content
 #########################################################
-def isRelatedToOrg(content):
-    content = re.sub(r'[^a-zA-Z]+', '', content)
-    if org_ptrn.match(content):
+def isRelated(content):
+    content = re.sub(r'[^a-zA-Z0-9==/\\]+', '', content)
+    if default_ptrn.match(content) or org_ptrn.match(content):
         return True
     else:
-        print(content)
+        #print(f"Non-relation detected:\n\tcontent:{content}")
         return False
 
 #########################################################
@@ -106,7 +113,7 @@ def isRelatedToOrg(content):
 #   Return:
 #       - dirs (list) if our operation was 'dirs'
 #       - Various regex pattern matches (str):
-#           - Basically converts url -> domain transform
+#           - Basically converts url -> domain transform 
 #             or to a base form (protocol + domain)
 #       - Otherwise returns None - operation was invalid
 #########################################################
@@ -153,7 +160,7 @@ def writeContentToFilepath(filepath, ext = None, content = None, doAppend = Fals
             with open(filepath + ext,"a") as f:
                 f.write(content)
         else:
-            with open(filepath+str(datetime.bw().time())+ ext,"w") as f:
+            with open(filepath+str(datetime.now().time())+ ext,"w") as f:
                 f.write(content)
 
 #########################################################
@@ -161,31 +168,43 @@ def writeContentToFilepath(filepath, ext = None, content = None, doAppend = Fals
 #       url: the url (str) to check the status code for
 #   Descr:
 #       - Selenium loads the specified URL in the browser
-#       - Force a wait period for 5 seconds
+#       - We wait *up to* 60 seconds or stop when a form
+#         element suddenly exists.
+#           - this ensures any javascript can run first and
+#             load up the page content/html
+#           - phishers gotta use a form to nab details.
 #       - Executes an async. script from getScriptString
+#         (basically just gets the pages status code)
 #   Return:
 #       - -1 = error getting status code/running XHR script
 #       - 0 = a selenium exception occurred (various errs)
 #             we also write to the bad urls file here
 #       - otherwise returns the status code (int)
 #########################################################
-def getStatusCode(url):
+def getStatusCode(url, doFullWait = False):
     try:
         driver.get(url)
-        cur_url = driver.current_url
-        driver.implicitly_wait(5)  #let the page load for 5 sec
-        script_result = driver.execute_async_script(getScriptString(cur_url))
-        if type(script_result) is str:
-            print(f"{url},{cur_url},'XHR Error'")
-            return -1
+        if doFullWait:
+            element = WebDriverWait(driver, 60).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "form"))
+                    )
+        if not doFullWait or element:
+            cur_url = driver.current_url
+            script_result = driver.execute_async_script(getScriptString(cur_url))
+            if type(script_result) is str:
+                print(f"{url},{cur_url},'XHR Error'")
+                return -1
+            else:
+                return script_result
         else:
-            return script_result
+            writeContentToFilepath(bads, ".txt", f"no_form, {url}, Couldn't locate form element within 60 sec.", True)
+            return 0
     except WebDriverException as e:
         writeContentToFilepath(bads, ".txt", f"failure, {url},'" + e.msg + f"'\n", True)
         return 0
 
 #########################################################
-#   getScriptString(url):
+#   getScriptSt ring(url):
 #       url: the url (str) to call this script within
 #   Descr:
 #       - returns the crafted script which will be used
@@ -252,7 +271,7 @@ def getLoot(url):
         content = driver.page_source
         writeContentToFilepath(dump_path, ".txt", content)
     else:
-        #print(f"Failed to match domain regex against {url}")
+        print(f"Failed to match domain regex against {url}")
         pass
 
 #########################################################
@@ -274,10 +293,10 @@ def checkForLoot(url):
                 found_creds = True
                 getLoot(loot_url)
             else:
-                #print(f"{loot_url} did not find loot. StatusCode: " + str(getStatusCode(loot_url)))
+                print(f"{loot_url} did not find loot. StatusCode: " + str(getStatusCode(loot_url)))
                 pass
     else:
-        #print(f"{url} was skipped (None means the regex didn't match, so the first_dir wasn't found)")
+        print(f"{url} was skipped (None means the regex didn't match, so the first_dir wasn't found)")
         pass
     return found_creds
 
@@ -320,7 +339,7 @@ def hasCredentials(url):
 #   setupFolders():
 # 
 #   Descr:
-#       - Pretty simple, create our various result folders
+#       - Pretty simple, create our various result fol    setupFolders()
 #   Return:
 #       n/a
 #########################################################
@@ -357,17 +376,15 @@ def packageResults():
     pyminizip.compress_multiple(targets,paths,datetime.now().strftime('%Y-%m-%d-%I%p') + '_results.zip',input('set zip password: '),1)
     shutil.rmtree("./results/")
 
-def handleAbuse(urls):
-    abuseDictionary = {}
-    for url in urls:
-        current_domain = parseUrl('domain', url)
-        if current_domain in abuseDictionary.keys():
-            abuseDictionary[current_domain]['originals'] += [url]
-        else:
-            abuseDictionary[current_domain] = {'originals': [url]}
-            abuseDictionary[current_domain]['abuse'] = whois.getAbuseInfo(current_domain)
-        abuse_contacts = abuseDictionary[current_domain]['abuse']
-        writeContentToFilepath(abuse_info, '.txt', f'{url},{current_domain},{abuse_contacts}\n',True)
+def read_urls(url_file):
+    with open('links.txt','r') as f:
+        return [url.strip('\n') for url in f.readlines()]
+
+def decode_urls(encoded_urls):
+    decoded_urls_string = base64.b64decode(encoded_urls).decode('ascii')
+    decoded_urls = decoded_urls_string.split('<br>')
+    return [url.strip(' ') for url in decoded_urls][:-1]
+
 #########################################################
 #   main():
 #   Descr:
@@ -405,14 +422,15 @@ def main():
     need_abuse_lookup = []
     with open(redirects + ".txt", "w") as f:
         f.write("")
-    with open(links_file, 'r+') as f:
         urls_with_creds = {}
-        for raw_url in f:
+        #urls = read_urls(links_file) 
+        urls = decode_urls(input('Enter base64 string: '))
+        for raw_url in urls:
             orig_url = raw_url.rstrip('\n')
             url = raw_url.rstrip("\n")
-            url_isAlive = isAlive(url)
-            time.sleep(5)  #let the page load so content isn't empty + javascript loader
-            url_isRelated = isRelatedToOrg(driver.page_source)
+            url_isAlive = isAlive(url, True)
+            #time.sleep(6)  #let the page load so content isn't empty + javascript loader
+            url_isRelated = isRelated(driver.page_source)
             url = driver.current_url
             if (url_isAlive == True) and (url_isRelated):
                 base = parseUrl("base", url)
@@ -424,7 +442,7 @@ def main():
                         #print(f"Adding new redirected url to dict {base} with new referrer list {orig_url}")
                         urls_with_creds[base] = [orig_url]
                     else:
-                        writeContentToFilepath(creds, ".txt", f"no creds,{orig_url},{url}", True)
+                        writeContentToFilepath(creds, ".txt", f"no creds,{orig_url},{url}\n", True)
                     
                 else:
                     redirected_url_cur_values = urls_with_creds[base]
@@ -433,10 +451,12 @@ def main():
                         urls_with_creds[base].append(orig_url)
             elif url_isAlive == False:
                 writeContentToFilepath(bads, ".txt", f"dead,{orig_url},{url}\n", True)
-            elif (url_isAlive == -1) or (not url_isRelated):
-                print(url_isAlive)
-                print(url_isRelated)
+            elif (url_isAlive == -1):
+                #print(url_isAlive)
+                #print(url_isRelated)
                 writeContentToFilepath(bads,".txt", f"error,{orig_url},{url}\n", True)
+            elif not url_isRelated:
+                writeContentToFilepath(bads,".txt", f"Unrelated,{orig_url},{url}\n", True)
             elif url_isAlive == 0:
                 pass 
             else:
@@ -449,27 +469,29 @@ def main():
                 if not referer_url == "":
                     #print(f"Writing to cred file referer {referer_url}, from final_url {final_url}")
                     writeContentToFilepath(creds, ".txt", f"creds,{referer_url},{final_url}\n",True)
+        driver.quit()
         return need_abuse_lookup
 
 if __name__ == "__main__":
-    setupFolders()
-    
-    opts = Options()
-    # [READ] The following is intentional [READ]
-    # At the moment, having resistFingerprinting on and setting the useragent
-    # override pref. causes useragent not to apply properly, feel free to test.
-    opts.set_preference("privacy.resistFingerprinting", False)
-    opts.set_preference("browser.safebrowsing.phishing.enabled", False)
-    opts.set_preference("general.useragent.override", user_agent)
+    try:
+        setupFolders()
+        
+        opts = Options()
 
-    driver = webdriver.Firefox(options = opts)
-    driver.set_window_size(window_width, window_height)
-    driver.set_page_load_timeout(60)
-    
-    need_abuse_lookup = main()
-    driver.quit()
-    
-    #TODO make this into a standalone function - writeAbuseInfo(domain)
-    #go through the urls and transform them into 'domain' form, store as set (no repeat entries)
-    handleAbuse(need_abuse_lookup)
-    packageResults()
+        # [READ] The following is intentional [READ]
+        # At the moment, having resistFingerprinting on and setting the useragent
+        # override pref. causes useragent not to apply properly, feel free to test.
+        opts.set_preference("privacy.resistFingerprinting", False)
+
+        opts.set_preference("browser.safebrowsing.phishing.enabled", False)
+        opts.set_preference("general.useragent.override", user_agent)
+
+        driver = webdriver.Firefox(options = opts)
+        driver.set_window_size(window_width, window_height)
+        driver.set_page_load_timeout(def_pageload_timeout)
+        results = main()
+
+        packageResults()
+    except KeyboardInterrupt as e:
+        os.rmdir('results')
+        sys.exit()

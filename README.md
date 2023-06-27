@@ -1,5 +1,5 @@
 # Kthulu: Destroyer of Phishers
-Mascot courtesy of skynet:
+Mascot courtesy of skynet:<br>
 ![Kthulu, glitchy patches that are slightly desaturated but colorful, side-profile of Kthulu (H I M) walking through stormy sea.](00073-1933934814.png)
 
 ## What is It?

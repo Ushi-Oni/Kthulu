@@ -1,4 +1,6 @@
 # Kthulu: Destroyer of Phishers
+Mascot courtesy of skynet:
+![Kthulu, glitchy patches that are slightly desaturated but colorful, side-profile of Kthulu (H I M) walking through stormy sea.](00073-1933934814.png)
 
 ## What is It?
 * Automated url validation (is it alive, is it relvant to what we're looking for, does it redirect?)

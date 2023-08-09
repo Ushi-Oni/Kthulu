@@ -19,7 +19,7 @@ import base64
 ###                     Directory Input                           ###
 #####################################################################
 loot_dirs = [                                                                   # Full filpaths to check for a cred dump file
-				'/MRWEEBEE/CREDS/CREDS.TXT', #[fictional example]
+				'//CREDS/CREDS.TXT', #[fictional example]
         ]
 links_file = "links.txt"                                                        # List of urls to check for status code and credentials
 results_dir = "./results/"                                                      # Base location for all resulting items
@@ -423,8 +423,10 @@ def main():
     with open(redirects + ".txt", "w") as f:
         f.write("")
         urls_with_creds = {}
-        #urls = read_urls(links_file) 
-        urls = decode_urls(input('Enter base64 string: '))
+        
+        urls = read_urls(links_file) 
+        #urls = decode_urls(input('Enter base64 string: '))
+        
         for raw_url in urls:
             orig_url = raw_url.rstrip('\n')
             url = raw_url.rstrip("\n")
